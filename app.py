@@ -148,7 +148,7 @@ if st.button("🚀 Optimise Resume", type="primary"):
                 st.markdown("_Use this template as a guide. Fill it with your specific achievements, making sure to incorporate the missing keywords where relevant._")
 
                 optimised_resume = f"""
-*[Your Name]*
+#[Your Name]
 [Your Phone Number] | [Your Email] | [Your LinkedIn Profile URL]
 
 ---
