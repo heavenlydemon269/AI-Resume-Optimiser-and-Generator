@@ -148,17 +148,17 @@ if st.button("🚀 Optimise Resume", type="primary"):
                 st.markdown("_Use this template as a guide. Fill it with your specific achievements, making sure to incorporate the missing keywords where relevant._")
 
                 optimised_resume = f"""
-#[Your Name]
+**[Your Name]**
 [Your Phone Number] | [Your Email] | [Your LinkedIn Profile URL]
 
 ---
 
-*Professional Summary*
+**Professional Summary**
 A results-oriented **[Your Role, e.g., Software Engineer]** with X years of experience, specializing in **{missing_keywords[0] if missing_keywords else 'backend development'}**. Proven ability to leverage **{found_keywords[0] if found_keywords else 'Python'}** and **{found_keywords[1] if found_keywords and len(found_keywords)>1 else 'Java'}** to build scalable systems. Eager to apply my skills in **{missing_keywords[1] if missing_keywords and len(missing_keywords)>1 else 'cloud computing'}** to contribute to [Target Company Name].
 
 ---
 
-*Skills*
+**Skills**
 * **Key Skills (from Job Description):** {', '.join(jd_keywords[:8])}
 * **Programming & Languages:** [List languages, e.g., Python, Java, SQL]
 * **Technologies & Frameworks:** [List tech, e.g., Docker, Kubernetes, Django, AWS, GCP]
