@@ -128,7 +128,6 @@ def run_job_matcher(resume_text):
     st.info(f"**Searching for jobs with query:** `{search_query}`")
 
     # Use Tavily to find job postings
-    # We ask for job descriptions in the search results
     search_results = search_tool.invoke(f"{search_query} job description")
 
     matched_jobs = []
@@ -139,17 +138,19 @@ def run_job_matcher(resume_text):
 
         if description:
             score = calculate_match_score(resume_text, description)
-            if score > 40: # Filter out very low-score matches
-                matched_jobs.append({
-                    "title": title,
-                    "url": url,
-                    "description": description,
-                    "score": score
-                })
+            # The 'if score > 40' condition has been removed.
+            # Every result will now be added to the list.
+            matched_jobs.append({
+                "title": title,
+                "url": url,
+                "description": description,
+                "score": score
+            })
 
     # Sort jobs by score in descending order
     matched_jobs.sort(key=lambda x: x['score'], reverse=True)
-    return matched_jobs[:5] # Return top 5
+    return matched_jobs[:5] # Return the top 5 results found
+
 
 def run_resume_tailor(resume_text, job_description):
     """Uses an LLM to tailor a resume for a specific job description."""
@@ -221,7 +222,7 @@ else:
             else:
                 st.warning("Please enter both a company name and a job role.")
 
-    # --- TAB 2: RESUME ANALYSIS & JOB MATCHING ---
+# --- TAB 2: RESUME ANALYSIS & JOB MATCHING ---
     with tab2:
         st.header("📄 Analyze Your Resume and Find Matching Jobs")
         uploaded_file = st.file_uploader("Upload your Resume (PDF or DOCX)", type=["pdf", "docx"], key="resume_uploader_tab2")
@@ -239,8 +240,9 @@ else:
                     st.subheader("Top Job Matches")
 
                     if not matched_jobs:
-                        st.warning("Could not find any high-confidence job matches. Try refining your resume.")
+                        st.warning("The web search did not return any job postings for your profile. You might try uploading a more detailed resume or checking your search query.")
                     else:
+                        st.markdown("Here are the top matches found for your profile. This can help you understand what the job market looks like, even if the match percentage is low.")
                         for job in matched_jobs:
                             with st.expander(f"**{job['title']}** - Match Score: {job['score']}%"):
                                 st.markdown(f"**URL:** [Link]({job['url']})")
