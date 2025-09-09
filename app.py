@@ -1,189 +1,291 @@
 import streamlit as st
-import PyPDF2
-import docx
-import re
-import collections
+import os
 import io
+import PyPDF2
+from docx import Document
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
-def extract_text_from_pdf(pdf_content_bytes):
-    """Extracts text from a PDF file's byte content."""
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_community.tools.tavily_search import TavilySearchResults
+from langchain import hub
+from langchain.agents import create_react_agent, AgentExecutor
+
+# --- PAGE CONFIGURATION ---
+st.set_page_config(
+    page_title="AI Career Assistant",
+    page_icon="🤖",
+    layout="wide"
+)
+
+# --- API KEY CONFIGURATION ---
+try:
+    os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
+    os.environ["TAVILY_API_KEY"] = st.secrets["TAVILY_API_KEY"]
+    keys_loaded = True
+except (KeyError, FileNotFoundError):
+    keys_loaded = False
+
+# --- SHARED COMPONENTS INITIALIZATION ---
+# Initialize LLM and Tools only once
+@st.cache_resource
+def get_shared_components():
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-1.5-flash-latest",
+        temperature=0.5, # Slightly lower temperature for more predictable output
+    )
+    search_tool = TavilySearchResults(k=5)
+    return llm, search_tool
+
+if keys_loaded:
+    llm, search_tool = get_shared_components()
+
+# --- HELPER FUNCTIONS ---
+
+def parse_resume(file):
+    """Parses uploaded resume file (PDF or DOCX) and returns its text content."""
+    file_extension = os.path.splitext(file.name)[1]
     text = ""
     try:
-        pdf_reader = PyPDF2.PdfReader(io.BytesIO(pdf_content_bytes))
-        for page in pdf_reader.pages:
-            page_text = page.extract_text()
-            if page_text:
-                text += page_text
+        if file_extension == ".pdf":
+            pdf_reader = PyPDF2.PdfReader(io.BytesIO(file.read()))
+            for page in pdf_reader.pages:
+                text += page.extract_text()
+        elif file_extension == ".docx":
+            doc = Document(io.BytesIO(file.read()))
+            for para in doc.paragraphs:
+                text += para.text + "\n"
+        else:
+            return None # Unsupported file type
     except Exception as e:
-        return f"Error reading PDF file: {e}"
+        st.error(f"Error parsing file: {e}")
+        return None
     return text
 
-def extract_text_from_docx(docx_content_bytes):
-    """Extracts text from a DOCX file's byte content."""
-    text = ""
-    try:
-        doc = docx.Document(io.BytesIO(docx_content_bytes))
-        for para in doc.paragraphs:
-            text += para.text + "\n"
-    except Exception as e:
-        return f"Error reading DOCX file: {e}"
-    return text
-
-def get_resume_text(filename, content_bytes):
-    """Determines file type and extracts text accordingly."""
-    if filename.lower().endswith('.pdf'):
-        return extract_text_from_pdf(content_bytes)
-    elif filename.lower().endswith('.docx'):
-        return extract_text_from_docx(content_bytes)
-    else:
-        return "Unsupported file format. Please upload a PDF or DOCX file."
-
-def extract_keywords(text):
-    """Extracts keywords from text using simple NLP."""
-    stop_words = set([
-        "i", "me", "my", "myself", "we", "our", "ours", "ourselves", "you", "your",
-        "yours", "yourself", "yourselves", "he", "him", "his", "himself", "she",
-        "her", "hers", "herself", "it", "its", "itself", "they", "them", "their",
-        "theirs", "themselves", "what", "which", "who", "whom", "this", "that",
-        "these", "those", "am", "is", "are", "was", "were", "be", "been", "being",
-        "have", "has", "had", "having", "do", "does", "did", "doing", "a", "an",
-        "the", "and", "but", "if", "or", "because", "as", "until", "while", "of",
-        "at", "by", "for", "with", "about", "against", "between", "into",
-        "through", "during", "before", "after", "above", "below", "to", "from",
-        "up", "down", "in", "out", "on", "off", "over", "under", "again",
-        "further", "then", "once", "here", "there", "when", "where", "why", "how",
-        "all", "any", "both", "each", "few", "more", "most", "other", "some",
-        "such", "no", "nor", "not", "only", "own", "same", "so", "than", "too",
-        "very", "s", "t", "can", "will", "just", "don", "should", "now",
-        "responsibilities", "requirements", "experience", "skills", "duties",
-        "qualifications", "required", "preferred", "plus", "degree", "etc"
-    ])
-
-    words = re.findall(r'\b[a-zA-Z-]+\b', text.lower())
-    keywords = [word for word in words if word not in stop_words and len(word) > 2]
-    most_common_keywords = collections.Counter(keywords).most_common(25)
-    return [keyword for keyword, count in most_common_keywords]
+def calculate_match_score(resume_text, job_description):
+    """Calculates a match score between resume and job description using TF-IDF."""
+    if not resume_text or not job_description:
+        return 0
+    text = [resume_text, job_description]
+    vectorizer = TfidfVectorizer(stop_words='english')
+    tfidf_matrix = vectorizer.fit_transform(text)
+    cosine_sim = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])
+    return int(cosine_sim[0][0] * 100)
 
 
-st.set_page_config(layout="wide", page_title="AI Resume Optimiser")
+# --- AGENT & FEATURE FUNCTIONS ---
 
-st.title("🤖 AI Resume Optimiser")
-st.markdown("""
-Welcome! This tool helps you tailor your resume to a specific job description to improve your chances of passing through Applicant Tracking Systems (ATS) and catching a recruiter's eye.
+def run_research_agent(company_name, job_role):
+    """
+    Initializes and runs the LangChain agent to research a company and job role.
+    (This is your original function, slightly adapted to use the shared llm and tool)
+    """
+    tools = [search_tool]
+    prompt = hub.pull("hwchase17/react")
+    agent = create_react_agent(llm, tools, prompt)
+    agent_executor = AgentExecutor(
+        agent=agent,
+        tools=tools,
+        handle_parsing_errors=True,
+        verbose=True
+    )
 
-**Instructions:**
-1.  **Upload your resume** in PDF or DOCX format.
-2.  **Paste the job description** into the text box.
-3.  Click the **"Optimise Resume"** button to get your analysis and a tailored template.
-""")
+    input_prompt = f"""
+    Research the company '{company_name}' and the specific job role of '{job_role}'.
 
-st.header("Step 1: Provide Your Details")
+    Your final answer MUST be a comprehensive summary structured into two clear sections using Markdown:
 
-col1, col2 = st.columns(2)
+    ### *Company Overview*
+    * *Domain/Industry*: What is the company's primary domain or industry?
+    * *Size*: What is its approximate size (e.g., number of employees)?
+    * *Recent News*: Find and summarize one or two recent, significant news articles about the company.
 
-with col1:
-    uploaded_resume = st.file_uploader("Upload Your Resume", type=['pdf', 'docx'], help="Please upload your resume in PDF or DOCX format.")
+    ### *Role-Specific Requirements*
+    * *Common Skills*: What are the most commonly required skills for an '{job_role}' at this company or in the industry?
+    * *Experience Level*: What is the typical level of experience (e.g., years, degrees) needed?
+    * *Salary Range*: What is the estimated salary range for this role? If a specific range for the company isn't available, provide a general industry estimate.
+    """
 
-with col2:
-    job_description = st.text_area("Paste the Job Description Here", height=300, placeholder="Paste the entire job description text here...")
+    response = agent_executor.invoke({"input": input_prompt})
+    return response['output']
 
-if st.button("🚀 Optimise Resume", type="primary"):
-    if uploaded_resume is not None and job_description:
-        with st.spinner('Analysing your resume and the job description...'):
-            resume_bytes = uploaded_resume.getvalue()
-            resume_filename = uploaded_resume.name
+def run_job_matcher(resume_text):
+    """Finds suitable job postings based on resume text."""
+    query_prompt = f"""
+    Based on the following resume text, generate a concise and effective search query to find suitable job postings on the internet.
+    The query should include a likely job title and key skills.
+    Example: "Data Scientist jobs with Python, SQL, and Machine Learning"
 
-            resume_text = get_resume_text(resume_filename, resume_bytes)
+    Resume Text:
+    ---
+    {resume_text[:2000]}
+    ---
+    Search Query:
+    """
+    query_response = llm.invoke(query_prompt)
+    search_query = query_response.content.strip()
 
-            if "Error" in resume_text or "Unsupported" in resume_text:
-                st.error(f"Could not process resume: {resume_text}")
+    st.info(f"**Searching for jobs with query:** `{search_query}`")
+
+    # Use Tavily to find job postings
+    # We ask for job descriptions in the search results
+    search_results = search_tool.invoke(f"{search_query} job description")
+
+    matched_jobs = []
+    for result in search_results:
+        title = result.get('title', 'No Title')
+        url = result.get('url', '#')
+        description = result.get('content', '')
+
+        if description:
+            score = calculate_match_score(resume_text, description)
+            if score > 40: # Filter out very low-score matches
+                matched_jobs.append({
+                    "title": title,
+                    "url": url,
+                    "description": description,
+                    "score": score
+                })
+
+    # Sort jobs by score in descending order
+    matched_jobs.sort(key=lambda x: x['score'], reverse=True)
+    return matched_jobs[:5] # Return top 5
+
+def run_resume_tailor(resume_text, job_description):
+    """Uses an LLM to tailor a resume for a specific job description."""
+    prompt = f"""
+    You are an expert career coach and professional resume writer. Your task is to rewrite the provided resume to be perfectly tailored for the given job description.
+
+    Follow these instructions carefully:
+    1.  **Analyze Both Documents:** Thoroughly read and understand the user's original resume and the target job description.
+    2.  **Incorporate Keywords:** Identify the key skills, technologies, and qualifications mentioned in the job description. Integrate them naturally into the resume's summary, skills, and experience sections.
+    3.  **Align with Job Duties:** Rephrase the experience bullet points to highlight accomplishments and responsibilities that are most relevant to the new role. Use action verbs from the job description where appropriate.
+    4.  **DO NOT FABRICATE:** You must not invent or exaggerate the user's experience. Work ONLY with the information provided in the original resume. Rephrase and reframe, but do not lie.
+    5.  **Maintain Professional Tone:** The output must be professional, clear, and concise.
+    6.  **Output Format:** Produce the final, tailored resume in well-structured Markdown format.
+
+    Here is the user's original resume:
+    ---
+    {resume_text}
+    ---
+
+    Here is the target job description:
+    ---
+    {job_description}
+    ---
+
+    Now, please provide the new, tailored resume.
+    """
+    response = llm.invoke(prompt)
+    return response.content
+
+# --- STREAMLIT UI ---
+st.title("🤖 AI Career Assistant")
+st.markdown("Your all-in-one tool to research companies, match your resume to jobs, and tailor your application.")
+
+if not keys_loaded:
+    st.error("API keys not found. Please add your GOOGLE_API_KEY and TAVILY_API_KEY to your Streamlit secrets.")
+    st.markdown(
+        "Create a file named `.streamlit/secrets.toml` in your project directory and add your keys like this:\n"
+        "```toml\n"
+        "GOOGLE_API_KEY = \"your_google_api_key_here\"\n"
+        "TAVILY_API_KEY = \"your_tavily_api_key_here\"\n"
+        "```"
+    )
+else:
+    # Initialize session state for resume text
+    if 'resume_text' not in st.session_state:
+        st.session_state.resume_text = ""
+
+    tab1, tab2, tab3 = st.tabs(["Company Research", "Resume Analysis & Job Matching", "Resume Tailoring"])
+
+    # --- TAB 1: COMPANY RESEARCH ---
+    with tab1:
+        st.header("🔍 Research a Company and Role")
+        col1, col2 = st.columns(2)
+        with col1:
+            company_name = st.text_input("Enter Company Name:", placeholder="e.g., Google, Microsoft", key="company")
+        with col2:
+            job_role = st.text_input("Enter Job Role:", placeholder="e.g., Software Engineer", key="role")
+
+        if st.button("Start Research", type="primary", key="research_button"):
+            if company_name and job_role:
+                with st.spinner(f"Researching {company_name} for the role of {job_role}..."):
+                    try:
+                        result = run_research_agent(company_name, job_role)
+                        st.markdown("---")
+                        st.subheader("Research Summary")
+                        st.markdown(result)
+                    except Exception as e:
+                        st.error(f"An error occurred: {e}")
             else:
-                jd_keywords = extract_keywords(job_description)
+                st.warning("Please enter both a company name and a job role.")
 
-                found_keywords = []
-                missing_keywords = []
-                resume_text_lower = resume_text.lower()
+    # --- TAB 2: RESUME ANALYSIS & JOB MATCHING ---
+    with tab2:
+        st.header("📄 Analyze Your Resume and Find Matching Jobs")
+        uploaded_file = st.file_uploader("Upload your Resume (PDF or DOCX)", type=["pdf", "docx"], key="resume_uploader_tab2")
 
-                for keyword in jd_keywords:
-                    if keyword in resume_text_lower:
-                        found_keywords.append(keyword)
+        if uploaded_file:
+            st.session_state.resume_text = parse_resume(uploaded_file)
+            if st.session_state.resume_text:
+                st.success("Resume parsed successfully!")
+
+        if st.button("Find Matching Jobs", type="primary", key="matcher_button", disabled=not st.session_state.resume_text):
+            with st.spinner("Analyzing resume and searching for the best job matches..."):
+                try:
+                    matched_jobs = run_job_matcher(st.session_state.resume_text)
+                    st.markdown("---")
+                    st.subheader("Top Job Matches")
+
+                    if not matched_jobs:
+                        st.warning("Could not find any high-confidence job matches. Try refining your resume.")
                     else:
-                        missing_keywords.append(keyword)
+                        for job in matched_jobs:
+                            with st.expander(f"**{job['title']}** - Match Score: {job['score']}%"):
+                                st.markdown(f"**URL:** [Link]({job['url']})")
+                                st.markdown("**Job Description Snippet:**")
+                                st.write(job['description'][:500] + "...")
+                except Exception as e:
+                    st.error(f"An error occurred: {e}")
 
-                st.header("Step 2: Your Optimisation Report")
-                st.success("Analysis complete! Here are your results.")
+    # --- TAB 3: RESUME TAILORING ---
+    with tab3:
+        st.header("✨ Tailor Your Resume for a Specific Job")
+        st.markdown("Upload your resume and paste a job description below to get a tailored version.")
 
-                report_col1, report_col2 = st.columns(2)
+        col1_tailor, col2_tailor = st.columns(2)
+        with col1_tailor:
+            uploaded_file_tailor = st.file_uploader("1. Upload your Resume", type=["pdf", "docx"], key="resume_uploader_tab3")
+            if uploaded_file_tailor:
+                st.session_state.resume_text = parse_resume(uploaded_file_tailor)
+                if st.session_state.resume_text:
+                    st.success("Resume parsed successfully!")
 
-                with report_col1:
-                    st.subheader("📊 Keyword Analysis")
-                    st.markdown(f"**Top Keywords from Job Description:**")
-                    st.info(f"{', '.join(jd_keywords[:15])}")
+        with col2_tailor:
+            job_description_text = st.text_area("2. Paste Job Description Here", height=300, key="jd_text")
 
-                    st.markdown(f"**✅ Keywords Found in Your Resume:**")
-                    if found_keywords:
-                        st.success(f"{', '.join(found_keywords)}")
-                    else:
-                        st.warning("None of the top keywords were found in your resume.")
+        if st.button("Tailor My Resume", type="primary", key="tailor_button", disabled=not (st.session_state.resume_text and job_description_text)):
+            with st.spinner("Your personal AI career coach is crafting the perfect resume..."):
+                try:
+                    # Calculate score before tailoring
+                    original_score = calculate_match_score(st.session_state.resume_text, job_description_text)
 
-                    st.markdown(f"**⚠️ Keywords to Add (if experienced):**")
-                    if missing_keywords:
-                        st.warning(f"{', '.join(missing_keywords)}")
-                        st.markdown("_**Tip:** Weave these naturally into your summary, skills, and experience descriptions._")
-                    else:
-                        st.success("Great job! Your resume contains all the top keywords.")
+                    # Run the tailor function
+                    tailored_resume = run_resume_tailor(st.session_state.resume_text, job_description_text)
 
+                    # Calculate score after tailoring
+                    new_score = calculate_match_score(tailored_resume, job_description_text)
 
-                with report_col2:
-                    st.subheader("📝 Formatting & ATS Tips")
-                    st.markdown("""
-                    * **Professional Summary:** Start with a 3-4 sentence summary tailored to the job.
-                    * **Skills Section:** Use a clear, bulleted list of your skills. Group them by category.
-                    * **Action Verbs & Metrics:** Begin experience bullet points with strong verbs (e.g., *Engineered, Managed, Led*). Quantify achievements with numbers (e.g., *"...increased revenue by 15%."*).
-                    * **Simple Formatting:** Avoid tables, columns, and images which can confuse ATS software.
-                    """)
+                    st.markdown("---")
+                    st.subheader("Your Tailored Resume")
 
-                st.subheader("📄 Your Suggested Optimised Resume (Template)")
-                st.markdown("---")
-                st.markdown("_Use this template as a guide. Fill it with your specific achievements, making sure to incorporate the missing keywords where relevant._")
+                    score_col1, score_col2 = st.columns(2)
+                    with score_col1:
+                        st.metric(label="Original Match Score", value=f"{original_score}%")
+                    with score_col2:
+                        st.metric(label="New Tailored Score", value=f"{new_score}%", delta=f"{new_score - original_score}%")
 
-                optimised_resume = f"""
-**[Your Name]**
-[Your Phone Number] | [Your Email] | [Your LinkedIn Profile URL]
-
----
-
-**Professional Summary**
-A results-oriented **[Your Role, e.g., Software Engineer]** with X years of experience, specializing in **{missing_keywords[0] if missing_keywords else 'backend development'}**. Proven ability to leverage **{found_keywords[0] if found_keywords else 'Python'}** and **{found_keywords[1] if found_keywords and len(found_keywords)>1 else 'Java'}** to build scalable systems. Eager to apply my skills in **{missing_keywords[1] if missing_keywords and len(missing_keywords)>1 else 'cloud computing'}** to contribute to [Target Company Name].
-
----
-
-**Skills**
-* **Key Skills (from Job Description):** {', '.join(jd_keywords[:8])}
-* **Programming & Languages:** [List languages, e.g., Python, Java, SQL]
-* **Technologies & Frameworks:** [List tech, e.g., Docker, Kubernetes, Django, AWS, GCP]
-* **Soft Skills:** [e.g., Agile Methodologies, Problem-Solving, Team Collaboration]
-
----
-
-**Professional Experience**
-
-**[Your Most Recent Job Title]** | [Company Name] | [City, State] | [Dates]
-* Engineered a new feature using **{found_keywords[0] if found_keywords else 'Python'}**, which improved system performance by 20%.
-* Collaborated in an Agile team to develop and deploy microservices on **{missing_keywords[0] if missing_keywords else 'AWS'}**, reducing latency by 150ms.
-* Managed the full software development lifecycle (SDLC) for a critical customer-facing application, improving user retention by 10%.
-
-**[Your Previous Job Title]** | [Company Name] | [City, State] | [Dates]
-* [Start with an action verb. Weave in a keyword. Add a number.]
-* [Action Verb + Keyword + Result]
-
----
-
-**Education**
-
-**[Your Degree]** | [University Name] | [City, State] | [Year of Graduation]
-"""
-                st.text_area("Copy this template", optimised_resume, height=500)
-
-    else:
-        st.error("Please make sure you have uploaded a resume AND pasted the job description before optimising.")
+                    st.markdown(tailored_resume)
+                except Exception as e:
+                    st.error(f"An error occurred: {e}")
