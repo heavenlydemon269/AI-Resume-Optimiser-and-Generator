@@ -111,24 +111,32 @@ def run_research_agent(company_name, job_role):
 
 def run_job_matcher(resume_text):
     """Finds suitable job postings based on resume text."""
+    # This prompt is heavily upgraded to be much more specific.
     query_prompt = f"""
-    Based on the following resume text, generate a concise and effective search query to find suitable job postings on the internet.
-    The query should include a likely job title and key skills.
-    Example: "Data Scientist jobs with Python, SQL, and Machine Learning"
+    You are an expert at crafting search queries for online job boards like LinkedIn, Naukri, and Indeed.
+    Based on the following resume text, generate a concise and effective search query to find ACTUAL JOB POSTINGS.
+    The user is located in Navi Mumbai, Maharashtra, India, so the query must include this location to find relevant local jobs.
+
+    The query MUST be structured to find job listings and explicitly avoid informational articles, guides, or salary reports.
+
+    Here are some good examples:
+    - "entry level python developer jobs in Navi Mumbai"
+    - "junior software engineer hiring in Mumbai with Django"
+    - "IoT developer open positions in Maharashtra"
 
     Resume Text:
     ---
     {resume_text[:2000]}
     ---
-    Search Query:
+    Optimized Job Search Query:
     """
     query_response = llm.invoke(query_prompt)
-    search_query = query_response.content.strip()
+    search_query = query_response.content.strip().replace("\"", "") # Remove quotes for cleaner search
 
     st.info(f"**Searching for jobs with query:** `{search_query}`")
 
-    # Use Tavily to find job postings
-    search_results = search_tool.invoke(f"{search_query} job description")
+    # Use the optimized query directly to get better results
+    search_results = search_tool.invoke(search_query)
 
     matched_jobs = []
     for result in search_results:
@@ -138,14 +146,16 @@ def run_job_matcher(resume_text):
 
         if description:
             score = calculate_match_score(resume_text, description)
-            # The 'if score > 40' condition has been removed.
-            # Every result will now be added to the list.
             matched_jobs.append({
                 "title": title,
                 "url": url,
                 "description": description,
                 "score": score
             })
+
+    # Sort jobs by score in descending order
+    matched_jobs.sort(key=lambda x: x['score'], reverse=True)
+    return matched_jobs[:5] # Return the top 5 results found
 
     # Sort jobs by score in descending order
     matched_jobs.sort(key=lambda x: x['score'], reverse=True)
