@@ -1,3 +1,11 @@
 streamlit
+langchain
+langchain-google-genai
+langchain-community
+langchain-agents
+langchain-hub
+tavily-python
 PyPDF2
 python-docx
+scikit-learn
+python-dotenv
