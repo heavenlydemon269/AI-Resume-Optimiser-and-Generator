@@ -1,8 +1,6 @@
-streamlit
 langchain
 langchain-google-genai
 langchain-community
-langchain-hub
 tavily-python
 PyPDF2
 python-docx
