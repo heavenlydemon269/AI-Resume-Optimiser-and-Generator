@@ -1,19 +1,8 @@
-# --- Core Framework ---
 streamlit
-
-# --- LangChain Ecosystem ---
-langchain>=0.2.0
-langchainhub>=0.1.0
-langchain-community>=0.2.0
-langchain-google-genai>=0.1.0
-
-# --- External Tools ---
-tavily-python>=0.3.0
-
-# --- Resume Parsing & Matching ---
 PyPDF2
 python-docx
 scikit-learn
-
-# --- Environment & Utilities ---
-python-dotenv
+langchain>=0.2.0
+langchain-community>=0.2.0
+langchain-google-genai>=0.2.0
+tavily-python
