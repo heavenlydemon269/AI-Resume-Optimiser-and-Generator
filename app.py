@@ -8,7 +8,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_community.tools.tavily_search import TavilySearchResults
-from langchainhub import hub
+from langchain import hub
 from langchain.agents import create_react_agent, AgentExecutor
 
 # --- PAGE CONFIGURATION ---
